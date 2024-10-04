@@ -1,0 +1,80 @@
+pipeline {
+    agent any
+    
+    environment{
+        OPENAI_API_KEY = credentials('OPENAI_API_KEY')
+        PYTHON_PATH = "C:\\Users\\rayyan.minhaj\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
+        BITBUCKET_PASSWORD = credentials('BITBUCKET_PASSWORD') //not being used
+        BITBUCKET_ACCESS_TOKEN = credentials('BITBUCKET_ACCESS_TOKEN')
+    }
+
+    stages {
+        
+        stage('Print Environment Variables') {
+            steps {
+                powershell 'gci env:\\ | ft name,value -autosize'
+            }
+        }
+        stage('Get PR Author') {
+            steps {
+                script {
+                    withEnv(["BITBUCKET_PR_AUTHOR_NAME=${env.BITBUCKET_PR_AUTHOR_NAME}"]){ 
+                        
+                        def approvedDevelopers = ['Rayyan Mohammad Minhaj'] //List of approved developers
+                        
+                        if (!approvedDevelopers.contains(BITBUCKET_PR_AUTHOR_NAME)) {
+                            error("Pipeline stopped: Developer not approved.")
+                        }
+                    }   
+                }
+            }
+        }
+        stage('Generating Disclaimer'){
+            steps {
+                withEnv([
+                        "BITBUCKET_WORKSPACE_SLUG=${env.BITBUCKET_WORKSPACE_SLUG}",
+                        "BITBUCKET_REPO_SLUG=${env.BITBUCKET_REPO_SLUG}",
+                        "BITBUCKET_PR_ID=${env.BITBUCKET_PR_ID}",
+                        "BITBUCKET_ACCESS_TOKEN=${env.BITBUCKET_ACCESS_TOKEN}"
+                        ]){ //i found this from the gci env cmd
+                        powershell "& ${env.PYTHON_PATH} config_files/disclaimer.py"
+                }  
+            }
+        }
+        stage('Generate Git Diff') {
+            steps {
+                script {
+                    // Perform a diff for .py files and save the output with the actual changes to a text file
+                    def diffOutput = powershell(returnStdout: true, script: '''
+                        git diff origin/main...origin/$env:BITBUCKET_PR_SOURCE_BRANCH -- *.py > git_diff.txt
+                    ''').trim()
+
+                    // Archive the git diff output as an artifact
+                    archiveArtifacts artifacts: 'git_diff.txt', allowEmptyArchive: false
+                }
+            }
+        }
+        stage('Generate Report'){
+            steps{
+                script{
+                    def reportOutput = powershell(script: "& ${env.PYTHON_PATH} config_files/generate_report.py git_diff.txt", returnStdout: true).trim()
+                    writeFile file: 'PR_Report.txt', text: reportOutput
+                    
+                    archiveArtifacts artifacts: 'PR_Report.txt', allowEmptyArchive: false
+                }
+            }    
+        }
+        stage('Post AI Generated Comment'){
+            steps {
+                withEnv([
+                        "BITBUCKET_WORKSPACE_SLUG=${env.BITBUCKET_WORKSPACE_SLUG}",
+                        "BITBUCKET_REPO_SLUG=${env.BITBUCKET_REPO_SLUG}",
+                        "BITBUCKET_PR_ID=${env.BITBUCKET_PR_ID}",
+                        "BITBUCKET_ACCESS_TOKEN=${env.BITBUCKET_ACCESS_TOKEN}"
+                        ]){ //i found this from the gci env cmd
+                        powershell "& ${env.PYTHON_PATH} config_files/post_comment_pr.py"
+                }  
+            }
+        }
+    }
+}

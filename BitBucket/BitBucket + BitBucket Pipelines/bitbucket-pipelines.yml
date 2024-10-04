@@ -1,0 +1,91 @@
+image: python:3.7
+
+definitions:
+  caches:
+    pip: ~/.cache/pip
+    
+    
+pipelines:
+  pull-requests:
+    '**':
+      - step:
+          name: Get PR Author
+          script:
+            - AUTHOR=$(git show -s --format="%aN" $BITBUCKET_COMMIT)
+            - echo $AUTHOR
+            #- ALLOWED_AUTHORS=($APPROVED_DEVS)
+            
+            - if [[ "$APPROVED_DEVS" == *"$AUTHOR"* ]]; then
+                echo "Author $AUTHOR is allowed.";      
+              else
+                echo "Author $AUTHOR is not allowed to run this pipeline.";
+                exit 1;
+              fi
+            
+      - step:
+          name: Install Dependencies
+          caches:
+            - pip
+          script:
+            - python3 -m venv .venv  #Create virtual environment
+            - source .venv/bin/activate
+            - pip install requests openai
+          artifacts:
+            - .venv/**  
+            
+      - step:
+          name: Generate Disclaimer
+          caches: 
+            - pip
+          script:
+            - source .venv/bin/activate
+            - python3 config_files/disclaimer.py
+      
+      - step:
+          name: Generate Git Diff
+          script:
+            - git fetch origin
+
+            # Getting the git diff for overview/summary
+            #- git diff origin/$DESTINATION_BRANCH...origin/$BITBUCKET_BRANCH -- *.py > git_diff.txt
+
+            # Getting the code before changes
+            - changed_files=$(git diff --name-only origin/$DESTINATION_BRANCH...origin/$BITBUCKET_BRANCH -- '*.py')
+            - |
+              for file in $changed_files; do
+                echo "### $file - BEFORE CHANGES ###" >> before_changes.txt
+                git show origin/$DESTINATION_BRANCH:$file >> before_changes.txt
+                echo -e "\n\n" >> before_changes.txt
+              done
+
+            # Getting the code after changes
+            - |
+              for file in $changed_files; do
+                echo "### $file - AFTER CHANGES ###" >> after_changes.txt
+                cat $file >> after_changes.txt
+                echo -e "\n\n" >> after_changes.txt
+              done
+
+          artifacts:
+            #- git_diff.txt
+            - before_changes.txt
+            - after_changes.txt
+
+      
+      - step:
+          name: Generate Report
+          caches: 
+            - pip
+          script:
+            - source .venv/bin/activate
+            - python3 config_files/generate_report.py before_changes.txt after_changes.txt > PR_Report.txt
+            
+      - step:
+          name: Generate Inline Comments
+          caches: 
+            - pip
+          script:
+            - source .venv/bin/activate
+            - python3 config_files/post_comment_pr.py before_changes.txt after_changes.txt
+          
+            

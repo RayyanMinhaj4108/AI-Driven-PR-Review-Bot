@@ -1,0 +1,54 @@
+image: python:3.7  # Use a Python image
+
+stages:
+  - install_dependencies
+  - run_steps
+  - generate_report
+  #- disclaimer
+  #- generate_diff
+  #- generate_report
+
+
+
+install_dependencies:
+  stage: install_dependencies
+  script:
+    - python3 -m venv .venv  
+    - source .venv/bin/activate
+    - pip install requests openai  
+  artifacts:
+    paths:
+      - .venv/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+
+
+
+run_stages:
+  stage: run_steps
+  script:
+    - source .venv/bin/activate  # Activate virtual environment
+    - python3 config_files/disclaimer.py  
+
+    - git fetch origin
+    - git diff origin/main...origin/$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME -- *.py > git_diff.txt
+  
+  artifacts:
+    paths:
+      - git_diff.txt
+
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+
+
+
+run_generate_report:
+  stage: generate_report
+  script:
+    - source .venv/bin/activate  
+    - python3 config_files/generate_report.py git_diff.txt
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+
+
